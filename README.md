@@ -94,8 +94,7 @@ Install these Arduino libraries:
 ## 📷 Circuit Diagram
 *(This diagram matches your Wokwi simulation setup)*
 
-![Circuit Diagram](circuit_diagram.png)  
-*(Replace with actual image from Wokwi export or Fritzing)*
+![Circuit Diagram](Circuit_Diagram.png)  
 
 ---
 
