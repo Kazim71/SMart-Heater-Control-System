@@ -1,0 +1,211 @@
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// --- PIN DEFINITIONS ---
+const int ONE_WIRE_BUS_PIN = 15;
+const int HEATER_LED_PIN = 12;
+const int STATUS_LED_PIN = 13;
+const int BUZZER_PIN = 14;
+
+// --- TEMP ZONES ---
+const float IDEAL_TEMP_C = 48.0;   // Ideal
+const float NORMAL_MAX_TEMP_C = 100.0;   // Heating 50-100, Overheat >100
+
+
+// --- STATE MACHINE ---
+enum SystemState { IDLE, NORMAL_WARM, OVERHEAT, ERROR };
+SystemState currentState = IDLE;
+
+// --- TIMING ---
+const unsigned long TEMP_READ_INTERVAL = 1000;
+unsigned long lastTempReadTime = 0;
+
+// --- SENSOR SETUP ---
+OneWire oneWire(ONE_WIRE_BUS_PIN);
+DallasTemperature sensors(&oneWire);
+
+// --- OLED DISPLAY SETUP ---
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// --- STATE TO STRING ---
+const char* stateToString(SystemState state);
+
+// --- Simulation Variables ---
+float simulatedTemp = 0.0;     // Starting from 0°C
+bool heatingUp = true;         // Starts heating initially
+
+
+// --- SETUP ---
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Heater Control System Initializing...");
+
+  pinMode(HEATER_LED_PIN, OUTPUT);
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    while (true);
+  }
+
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(10, 25);
+  display.println("Starting...");
+  display.display();
+  delay(1000);
+
+  sensors.begin();
+  if (sensors.getDeviceCount() == 0) {
+    Serial.println("ERROR: No DS18B20 sensor found!");
+    currentState = ERROR;
+  } else {
+    Serial.println("Sensor found. System is now in IDLE state.");
+  }
+
+  updateIndicators();
+}
+
+// --- LOOP ---
+void loop() {
+  if (millis() - lastTempReadTime >= TEMP_READ_INTERVAL) {
+    lastTempReadTime = millis();
+
+    // --- Simulate Temperature ---
+    if (heatingUp) {
+      simulatedTemp += 5.0;  // heating up
+      if (simulatedTemp >= 125.0) heatingUp = false;  // start cooling
+    } else {
+      simulatedTemp -= 3;  // cooling
+      if (simulatedTemp <= 47.0) heatingUp = true;  // only cool down to ~ideal
+    }
+
+    float temp = simulatedTemp;
+
+    // Run system logic
+    runStateMachine(temp);
+    logStatus(temp);
+    updateIndicators();
+  }
+}
+
+
+
+// --- FSM LOGIC ---
+void runStateMachine(float temp) {
+  SystemState previousState = currentState;
+
+  if (temp < IDEAL_TEMP_C) {
+    currentState = IDLE;
+  } else if (temp >= IDEAL_TEMP_C && temp <= NORMAL_MAX_TEMP_C) {
+    currentState = NORMAL_WARM;
+  } else if (temp > NORMAL_MAX_TEMP_C) {
+    currentState = OVERHEAT;
+  }
+
+  if (previousState != currentState) {
+    Serial.print("State changed to: ");
+    Serial.println(stateToString(currentState));
+  }
+}
+
+// --- LED/BUZZER CONTROL ---
+void updateIndicators() {
+  switch (currentState) {
+    case IDLE:
+      digitalWrite(HEATER_LED_PIN, LOW);
+      digitalWrite(STATUS_LED_PIN, LOW);
+      digitalWrite(BUZZER_PIN, LOW);
+      break;
+    case NORMAL_WARM:
+      digitalWrite(HEATER_LED_PIN, LOW);
+      digitalWrite(STATUS_LED_PIN, HIGH);
+      digitalWrite(BUZZER_PIN, LOW);
+      break;
+    case OVERHEAT:
+      digitalWrite(HEATER_LED_PIN, HIGH);
+      digitalWrite(STATUS_LED_PIN, LOW);
+      digitalWrite(BUZZER_PIN, HIGH);
+      break;
+    case ERROR:
+      digitalWrite(HEATER_LED_PIN, (millis() / 250) % 2);
+      digitalWrite(STATUS_LED_PIN, !((millis() / 250) % 2));
+      digitalWrite(BUZZER_PIN, LOW);
+      break;
+  }
+}
+
+// --- OLED DISPLAY ---
+void logStatus(float temp) {
+  Serial.print("Temp: ");
+  Serial.print(temp);
+  Serial.print("°C | State: ");
+  Serial.println(stateToString(currentState));
+
+  display.clearDisplay();
+
+  // Title
+  display.setTextSize(2);
+  display.setCursor(0, 0);
+  display.println("Heater");
+
+  // Temperature
+  display.setTextSize(1);
+  display.setCursor(0, 22);
+  display.print("Temp: ");
+  display.print(temp, 1);
+  display.print(" C");
+
+  // System State
+  display.setCursor(0, 34);
+  display.print("State: ");
+  display.print(stateToString(currentState));
+
+  // Progress bar (clears old bar and redraws new)
+  int barWidth = map(temp, 0, 80, 0, 100);
+  display.fillRect(0, 50, 100, 8, SSD1306_BLACK); // clear old bar
+  //display.drawRect(0, 50, 100, 8, SSD1306_WHITE); // border
+  display.fillRect(0, 50, barWidth, 8, SSD1306_WHITE); // new fill
+
+  // Status Icon (ASCII fallback)
+  display.setCursor(105, 50);
+  switch (currentState) {
+    case OVERHEAT:
+      display.print("!");
+      break;
+    case NORMAL_WARM:
+      display.print("+");
+      break;
+    case IDLE:
+      display.print(".");
+      break;
+    case ERROR:
+      display.print("X");
+      break;
+  }
+
+  // Progress animation bar (for activity)
+  display.drawRect(0, 55, 128, 5, WHITE);                  // outline
+  //display.fillRect(0, 55, millis() % 128, 5, WHITE);       // moving bar
+
+  display.display();
+}
+
+
+// --- STATE STRING CONVERTER ---
+const char* stateToString(SystemState state) {
+  switch (state) {
+    case IDLE: return "IDLE";
+    case NORMAL_WARM: return "HEATING";
+    case OVERHEAT: return "OVERHEAT";
+    case ERROR: return "ERROR";
+    default: return "UNKNOWN";
+  }
+}
